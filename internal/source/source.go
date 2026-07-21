@@ -22,17 +22,25 @@ type Source interface {
 	Close() error
 }
 
-// cpuBusy returns the busy fraction (0..100) implied by the delta between two
-// cumulative CPUStat samples. This is the interval-independent method htop and
-// talosctl dashboard use: usage = (total - idle) / total over the delta.
-func cpuBusy(prev, cur cpuCounters) float64 {
+// cpuLoad returns the per-category utilisation (0..100 each) implied by the
+// delta between two cumulative CPUStat samples. This is the interval-independent
+// method htop and talosctl dashboard use: each category is its share of the
+// total CPU-time delta.
+func cpuLoad(prev, cur cpuCounters) model.CPULoad {
 	dTotal := cur.total() - prev.total()
-	dIdle := (cur.Idle + cur.Iowait) - (prev.Idle + prev.Iowait)
 	if dTotal <= 0 {
-		return 0
+		return model.CPULoad{}
 	}
-	usage := (1 - dIdle/dTotal) * 100
-	return clampPercent(usage)
+	pct := func(now, before float64) float64 {
+		return clampPercent((now - before) / dTotal * 100)
+	}
+	return model.CPULoad{
+		User:   pct(cur.User, prev.User),
+		Nice:   pct(cur.Nice, prev.Nice),
+		System: pct(cur.System, prev.System),
+		IRQ:    pct(cur.Irq+cur.SoftIrq, prev.Irq+prev.SoftIrq),
+		Other:  pct(cur.Steal+cur.Guest+cur.GuestNice, prev.Steal+prev.Guest+prev.GuestNice),
+	}
 }
 
 // cpuCounters mirrors the cumulative per-CPU seconds reported by the machine

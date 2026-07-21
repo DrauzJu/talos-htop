@@ -10,38 +10,39 @@ import (
 )
 
 var (
-	styleHeaderRow = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
-	styleSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("2"))
+	styleHeaderRow = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(colCyan).Bold(true)
+	styleSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(colGreen).Bold(true)
 	styleDim       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	styleKey       = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6"))
-	styleErr       = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	styleCmd       = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	styleFooter    = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(colCyan)
+	styleFnKey     = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(colCyan).Bold(true)
+	styleErr       = lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	styleCmd       = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	styleBorder    = lipgloss.NewStyle().Foreground(colBracket)
+	styleTitle     = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	styleSep       = lipgloss.NewStyle().Foreground(colGray)
 )
 
-// meterCols is the number of CPU-meter columns for the current width.
-func (m Model) meterCols() int {
-	if m.width >= 90 {
-		return 2
-	}
-	return 1
-}
+// twoColumn reports whether the meter header uses the side-by-side layout.
+func (m Model) twoColumn() bool { return m.width >= 70 }
 
-// headerHeight is the number of rows the header block occupies. Kept in sync
-// with renderHeader so scrolling math matches what is drawn.
-func (m Model) headerHeight() int {
-	cols := m.meterCols()
+// headerContentRows is the number of content lines inside the meter box.
+func (m Model) headerContentRows() int {
 	cores := len(m.snap.CPU.PerCore)
 	if cores == 0 {
 		cores = 1
 	}
-	cpuRows := (cores + cols - 1) / cols
-	memRows := 2
-	if m.width >= 90 {
-		memRows = 1 // Mem and Swp side by side
+	const rightLines = 5 // Mem, Swp, Tasks, Load, Uptime
+	if m.twoColumn() {
+		if cores > rightLines {
+			return cores
+		}
+		return rightLines
 	}
-	// title + cpu grid + mem/swap + summary + blank separator
-	return 1 + cpuRows + memRows + 1 + 1
+	return cores + rightLines
 }
+
+// headerHeight is the total rows the meter box occupies (content + 2 borders).
+func (m Model) headerHeight() int { return m.headerContentRows() + 2 }
 
 // listHeight is the number of process rows that fit on screen.
 func (m Model) listHeight() int {
@@ -57,7 +58,7 @@ func (m Model) View() string {
 		return "Connecting to Talos node…"
 	}
 	var b strings.Builder
-	b.WriteString(m.renderHeader())
+	b.WriteString(m.renderHeaderBox())
 	b.WriteByte('\n')
 	b.WriteString(m.renderColumns())
 	b.WriteByte('\n')
@@ -66,10 +67,85 @@ func (m Model) View() string {
 	return b.String()
 }
 
-func (m Model) renderHeader() string {
-	var lines []string
+// ---- meter header box -------------------------------------------------------
 
-	// Title line: identity + poll status.
+func (m Model) renderHeaderBox() string {
+	contentW := m.width - 4 // "│ " + content + " │"
+	if contentW < 10 {
+		contentW = 10
+	}
+
+	// Build the two meter columns.
+	var left, right []string
+	cores := m.snap.CPU.PerCore
+
+	if m.twoColumn() {
+		leftW := contentW/2 - 1
+		rightW := contentW - leftW - 2
+		for i, c := range cores {
+			left = append(left, cpuMeter(fmt.Sprintf("%2d", i), c, leftW))
+		}
+		if len(cores) == 0 {
+			left = append(left, cpuMeter("Cpu", m.snap.CPU.Total, leftW))
+		}
+		right = m.textMeters(rightW)
+		return m.box(m.joinColumns(left, right, leftW, rightW), contentW)
+	}
+
+	// Narrow: everything stacked in one column.
+	for i, c := range cores {
+		left = append(left, cpuMeter(fmt.Sprintf("%2d", i), c, contentW))
+	}
+	if len(cores) == 0 {
+		left = append(left, cpuMeter("Cpu", m.snap.CPU.Total, contentW))
+	}
+	left = append(left, m.textMeters(contentW)...)
+	return m.box(left, contentW)
+}
+
+// textMeters builds the right-hand column: Mem, Swp, and the text stats.
+func (m Model) textMeters(w int) []string {
+	tasks := fmt.Sprintf("%s Tasks, %s thr; %s running",
+		styleTitle.Render(itoaInt(len(m.snap.Proc))),
+		itoaInt(m.snap.Threads()),
+		lipgloss.NewStyle().Foreground(colGreen).Render(itoaInt(m.snap.Running())))
+	load := lipgloss.NewStyle().Foreground(colLabel).Bold(true).Render("Load ") +
+		loadString(m.snap.LoadAvg)
+	up := lipgloss.NewStyle().Foreground(colLabel).Bold(true).Render("Uptime ") +
+		formatUptime(m.snap.Uptime)
+	return []string{
+		memMeter(m.snap.Mem, w),
+		swapMeter(m.snap.Mem, w),
+		padRight(tasks, w),
+		padRight(load, w),
+		padRight(up, w),
+	}
+}
+
+// joinColumns places left and right meter lists side by side, padding each to
+// its column width and the shorter list with blanks.
+func (m Model) joinColumns(left, right []string, leftW, rightW int) []string {
+	n := len(left)
+	if len(right) > n {
+		n = len(right)
+	}
+	lines := make([]string, n)
+	for i := 0; i < n; i++ {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		lines[i] = padRight(l, leftW) + "  " + padRight(r, rightW)
+	}
+	return lines
+}
+
+// box wraps content lines in a rounded border with a title embedded in the top
+// edge, btop/htop style.
+func (m Model) box(lines []string, contentW int) string {
 	node := m.snap.Hostname
 	if node == "" {
 		node = m.snap.Node
@@ -77,89 +153,125 @@ func (m Model) renderHeader() string {
 	if node == "" {
 		node = "(endpoint)"
 	}
-	title := fmt.Sprintf("talos-htop  %s", lipgloss.NewStyle().Bold(true).Render(node))
+	title := "talos-htop · " + node
 	if m.snap.Version != "" {
-		title += styleDim.Render("  " + m.snap.Version)
+		title += " · " + m.snap.Version
 	}
 	if m.lastErr != nil {
-		title += "  " + styleErr.Render("[poll error: "+truncate(m.lastErr.Error(), 40)+"]")
-	}
-	lines = append(lines, title)
-
-	// CPU meters in a grid.
-	cols := m.meterCols()
-	cellW := m.width/cols - 1
-	if cellW < 20 {
-		cellW = 20
-	}
-	cores := m.snap.CPU.PerCore
-	var cpuLines []string
-	for i := 0; i < len(cores); i += cols {
-		var cells []string
-		for c := 0; c < cols && i+c < len(cores); c++ {
-			idx := i + c
-			label := fmt.Sprintf("%2d", idx)
-			cells = append(cells, cpuMeter(label, cores[idx], cellW))
-		}
-		cpuLines = append(cpuLines, strings.Join(cells, " "))
-	}
-	if len(cores) == 0 {
-		cpuLines = append(cpuLines, cpuMeter("Cpu", m.snap.CPU.Total, cellW))
-	}
-	lines = append(lines, cpuLines...)
-
-	// Memory + swap.
-	if m.width >= 90 {
-		mem := memMeter(m.snap.Mem, cellW)
-		swp := swapMeter(m.snap.Mem, cellW)
-		lines = append(lines, mem+" "+swp)
-	} else {
-		lines = append(lines, memMeter(m.snap.Mem, m.width-1))
-		lines = append(lines, swapMeter(m.snap.Mem, m.width-1))
+		title += " · " + styleErr.Render("poll error")
 	}
 
-	// Summary: tasks, load, uptime, CPU total.
-	summary := fmt.Sprintf(
-		"Tasks: %s, %s thr; %s running   Load: %s   Uptime: %s   CPU: %s",
-		lipgloss.NewStyle().Bold(true).Render(itoaInt(len(m.snap.Proc))),
-		itoaInt(m.snap.Threads()),
-		lipgloss.NewStyle().Foreground(colGreen).Render(itoaInt(m.snap.Running())),
-		loadString(m.snap.LoadAvg),
-		formatUptime(m.snap.Uptime),
-		fmt.Sprintf("%.1f%%", m.snap.CPU.Total),
-	)
-	lines = append(lines, styleDim.Render(truncate(summary, m.width)))
+	var b strings.Builder
+	// Top border: ╭─ title ───...───╮
+	prefix := "╭─ "
+	styledTitle := styleTitle.Render(title)
+	used := lipgloss.Width(prefix) + lipgloss.Width(styledTitle) + 1 // +1 space
+	dashes := m.width - used - 1                                     // -1 for ╮
+	if dashes < 0 {
+		dashes = 0
+	}
+	b.WriteString(styleBorder.Render(prefix))
+	b.WriteString(styledTitle)
+	b.WriteString(styleBorder.Render(" " + strings.Repeat("─", dashes) + "╮"))
+	b.WriteByte('\n')
 
-	lines = append(lines, "") // blank separator
-	return strings.Join(lines, "\n")
+	for _, ln := range lines {
+		b.WriteString(styleBorder.Render("│ "))
+		b.WriteString(padRight(ln, contentW))
+		b.WriteString(styleBorder.Render(" │"))
+		b.WriteByte('\n')
+	}
+
+	b.WriteString(styleBorder.Render("╰" + strings.Repeat("─", m.width-2) + "╯"))
+	return b.String()
 }
 
-// column widths (excluding the flexible Command column)
-const (
-	wPID  = 7
-	wST   = 3
-	wCPU  = 6
-	wMEM  = 6
-	wVIRT = 8
-	wRES  = 8
-	wTHR  = 5
-	wTIME = 10
-)
+// ---- process table ----------------------------------------------------------
+
+type col struct {
+	title string
+	w     int
+	right bool
+}
+
+var procCols = []col{
+	{"PID", 7, true},
+	{"S", 1, false},
+	{"CPU%", 5, true},
+	{"MEM%", 5, true},
+	{"VIRT", 8, true},
+	{"RES", 8, true},
+	{"THR", 4, true},
+	{"TIME+", 9, true},
+}
+
+const colSep = " │ "
+
+// fixedWidth is the total width of the fixed columns plus their separators
+// (including the separator before the Command column).
+func fixedWidth() int {
+	w := 0
+	for _, c := range procCols {
+		w += c.w
+	}
+	w += len(procCols) * len(colSep) // a separator after each fixed column
+	return w
+}
+
+func (m Model) commandWidth() int {
+	w := m.width - fixedWidth()
+	if w < 6 {
+		w = 6
+	}
+	return w
+}
+
+func fmtCell(c col, v string) string {
+	if c.right {
+		return fmt.Sprintf("%*s", c.w, truncate(v, c.w))
+	}
+	return fmt.Sprintf("%-*s", c.w, truncate(v, c.w))
+}
 
 func (m Model) renderColumns() string {
-	head := fmt.Sprintf("%*s %-*s %*s %*s %*s %*s %*s %*s %s",
-		wPID, "PID", wST, "S", wCPU, "CPU%", wMEM, "MEM%",
-		wVIRT, "VIRT", wRES, "RES", wTHR, "THR", wTIME, "TIME+", sortMarker(m)+"Command")
-	head = padRight(head, m.width)
-	return styleHeaderRow.Render(head)
+	sep := styleHeaderRow.Render(colSep)
+	var parts []string
+	for _, c := range procCols {
+		title := c.title
+		if c.title == m.sortColTitle() {
+			title = m.sortArrow() + strings.TrimSpace(c.title)
+		}
+		parts = append(parts, styleHeaderRow.Render(fmtCell(c, title)))
+	}
+	cmdTitle := "Command"
+	if m.sortKey == sortName {
+		cmdTitle = m.sortArrow() + "Command"
+	}
+	line := strings.Join(parts, sep) + sep +
+		styleHeaderRow.Render(padRight(truncate(cmdTitle, m.commandWidth()), m.commandWidth()))
+	return line
 }
 
-func sortMarker(m Model) string {
-	arrow := "▼"
-	if !m.desc {
-		arrow = "▲"
+func (m Model) sortColTitle() string {
+	switch m.sortKey {
+	case sortCPU:
+		return "CPU%"
+	case sortMem:
+		return "MEM%"
+	case sortPID:
+		return "PID"
+	case sortTime:
+		return "TIME+"
+	default:
+		return ""
 	}
-	return "[" + m.sortKey.String() + arrow + "] "
+}
+
+func (m Model) sortArrow() string {
+	if m.desc {
+		return "▾"
+	}
+	return "▴"
 }
 
 func (m Model) renderRows() string {
@@ -167,8 +279,7 @@ func (m Model) renderRows() string {
 	var b strings.Builder
 	if len(m.rows) == 0 {
 		b.WriteString(styleDim.Render("  (no processes match)"))
-		b.WriteByte('\n')
-		for i := 1; i < h; i++ {
+		for i := 0; i < h; i++ {
 			b.WriteByte('\n')
 		}
 		return b.String()
@@ -184,7 +295,7 @@ func (m Model) renderRows() string {
 		b.WriteByte('\n')
 		drawn++
 	}
-	for ; drawn < h; drawn++ { // pad to a stable height
+	for ; drawn < h; drawn++ {
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -193,80 +304,109 @@ func (m Model) renderRows() string {
 func (m Model) renderRow(r row, selected bool) string {
 	p := r.proc
 	cmd := r.prefix + p.Name()
+	cmdW := m.commandWidth()
 
-	fixed := fmt.Sprintf("%*d %-*s %*s %*s %*s %*s %*d %*s ",
-		wPID, p.PID,
-		wST, stateShort(p.State),
-		wCPU, formatPercent(p.CPUPercent),
-		wMEM, formatPercent(p.MemPercent),
-		wVIRT, humanBytes(p.VirtualMemory),
-		wRES, humanBytes(p.ResidentMemory),
-		wTHR, p.Threads,
-		wTIME, formatCPUTime(p.CPUTime),
-	)
-
-	cmdWidth := m.width - lipgloss.Width(fixed)
-	if cmdWidth < 1 {
-		cmdWidth = 1
+	vals := []string{
+		itoa(p.PID),
+		stateShort(p.State),
+		formatPercent(p.CPUPercent),
+		formatPercent(p.MemPercent),
+		humanBytes(p.VirtualMemory),
+		humanBytes(p.ResidentMemory),
+		fmt.Sprintf("%d", p.Threads),
+		formatCPUTime(p.CPUTime),
 	}
-	cmd = truncate(cmd, cmdWidth)
 
 	if selected {
-		line := padRight(fixed+cmd, m.width)
-		return styleSelected.Render(line)
+		// A uniform highlight bar, like htop's selected row.
+		var plain strings.Builder
+		for i, c := range procCols {
+			plain.WriteString(fmtCell(c, vals[i]))
+			plain.WriteString(colSep)
+		}
+		plain.WriteString(truncate(cmd, cmdW))
+		return styleSelected.Render(padRight(plain.String(), m.width))
 	}
 
-	// Colourise a few fields when not selected.
-	colored := colorField(fixed, p)
-	return colored + styleCmd.Render(cmd)
+	sep := styleSep.Render(colSep)
+	var parts []string
+	for i, c := range procCols {
+		parts = append(parts, colorCell(c, vals[i], p))
+	}
+	line := strings.Join(parts, sep) + sep + renderCommand(r, cmdW)
+	return line
 }
 
-// colorField re-colours the CPU%/MEM%/state portions of the pre-formatted fixed
-// columns. It rebuilds the string to keep alignment intact.
-func colorField(fixed string, p model.Process) string {
-	// Recompose with colour rather than trying to patch the flat string.
-	pid := lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(fmt.Sprintf("%*d", wPID, p.PID))
-	st := stateStyle(p.State).Render(fmt.Sprintf(" %-*s", wST, stateShort(p.State)))
-	cpu := lipgloss.NewStyle().Foreground(loadColor(p.CPUPercent)).Render(fmt.Sprintf(" %*s", wCPU, formatPercent(p.CPUPercent)))
-	mem := lipgloss.NewStyle().Foreground(loadColor(p.MemPercent)).Render(fmt.Sprintf(" %*s", wMEM, formatPercent(p.MemPercent)))
-	rest := fmt.Sprintf(" %*s %*s %*d %*s ",
-		wVIRT, humanBytes(p.VirtualMemory),
-		wRES, humanBytes(p.ResidentMemory),
-		wTHR, p.Threads,
-		wTIME, formatCPUTime(p.CPUTime),
-	)
-	return pid + st + cpu + mem + styleDim.Render(rest)
+// colorCell renders one fixed column with the appropriate colour.
+func colorCell(c col, v string, p model.Process) string {
+	cell := fmtCell(c, v)
+	switch c.title {
+	case "PID":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(cell)
+	case "S":
+		return stateStyle(p.State).Render(cell)
+	case "CPU%":
+		return lipgloss.NewStyle().Foreground(loadColor(p.CPUPercent)).Render(cell)
+	case "MEM%":
+		return lipgloss.NewStyle().Foreground(loadColor(p.MemPercent)).Render(cell)
+	default:
+		return styleDim.Render(cell)
+	}
 }
+
+// renderCommand colours the tree prefix dimly and the command brighter.
+func renderCommand(r row, w int) string {
+	full := truncate(r.prefix+r.proc.Name(), w)
+	if r.prefix != "" && strings.HasPrefix(full, r.prefix) {
+		rest := full[len(r.prefix):]
+		return styleSep.Render(r.prefix) + styleCmd.Render(rest)
+	}
+	return styleCmd.Render(full)
+}
+
+// ---- footer -----------------------------------------------------------------
 
 func (m Model) renderFooter() string {
 	if m.searching {
-		return m.search.View()
+		return styleFooter.Render(padRight(truncate(m.search.View(), m.width), m.width))
 	}
-	var hint string
+
+	type fk struct{ key, label string }
+	var keys []fk
 	if m.showHelp {
-		hint = "↑↓/jk move  PgUp/PgDn page  g/G top/bottom  " +
-			"t/F5 tree  p CPU  m MEM  n PID  T TIME  c CMD  i invert  / search  ? help  q quit"
-	} else {
-		treeState := "off"
-		if m.tree {
-			treeState = "on"
+		keys = []fk{
+			{"↑↓/jk", "Move"}, {"PgUp/Dn", "Page"}, {"g/G", "Top/Bot"},
+			{"t", "Tree"}, {"p", "CPU"}, {"m", "MEM"}, {"n", "PID"},
+			{"T", "TIME"}, {"c", "CMD"}, {"i", "Invert"}, {"/", "Search"}, {"q", "Quit"},
 		}
-		hint = fmt.Sprintf("Sort %s %s | Tree %s | %d procs | ? help  q quit",
-			m.sortKey.String(), arrowFor(m.desc), treeState, len(m.rows))
+	} else {
+		tree := "off"
+		if m.tree {
+			tree = "on"
+		}
+		keys = []fk{
+			{"F5", "Tree:" + tree}, {"F6", "Sort:" + m.sortKey.String() + m.sortArrow()},
+			{"/", "Search"}, {"?", "Help"}, {"q", "Quit"},
+		}
 		if m.query != "" {
-			hint = "filter=\"" + m.query + "\" | " + hint
+			keys = append([]fk{{"filter", "\"" + m.query + "\""}}, keys...)
 		}
 	}
-	return styleKey.Render(padRight(truncate(hint, m.width), m.width))
+
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(styleFnKey.Render(" " + k.key + " "))
+		b.WriteString(styleFooter.Render(k.label + " "))
+	}
+	return styleFooter.Render(padRight(truncate(b.String(), m.width), m.width))
 }
 
-// --- small helpers ---
+// ---- small helpers ----------------------------------------------------------
 
 func stateShort(s string) string {
 	if s == "" {
 		return "?"
 	}
-	// Talos may report either single-letter codes or words like "running".
 	switch s {
 	case "running":
 		return "R"
@@ -283,7 +423,7 @@ func stateStyle(s string) lipgloss.Style {
 	case "R":
 		return lipgloss.NewStyle().Foreground(colGreen).Bold(true)
 	case "D", "Z":
-		return lipgloss.NewStyle().Foreground(colRed)
+		return lipgloss.NewStyle().Foreground(colRed).Bold(true)
 	default:
 		return styleDim
 	}
@@ -291,16 +431,12 @@ func stateStyle(s string) lipgloss.Style {
 
 func loadString(l [3]float64) string {
 	if l == [3]float64{} {
-		return "n/a"
+		return styleDim.Render("n/a")
 	}
-	return fmt.Sprintf("%.2f %.2f %.2f", l[0], l[1], l[2])
-}
-
-func arrowFor(desc bool) string {
-	if desc {
-		return "▼"
+	c := func(v float64) string {
+		return lipgloss.NewStyle().Foreground(loadColor(v * 25)).Render(fmt.Sprintf("%.2f", v))
 	}
-	return "▲"
+	return c(l[0]) + " " + c(l[1]) + " " + c(l[2])
 }
 
 func truncate(s string, w int) string {
@@ -310,7 +446,6 @@ func truncate(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	// Trim rune-safely to width, leaving room for an ellipsis.
 	runes := []rune(s)
 	for len(runes) > 0 && lipgloss.Width(string(runes)) > w {
 		runes = runes[:len(runes)-1]
@@ -329,6 +464,4 @@ func padRight(s string, w int) string {
 	return s + strings.Repeat(" ", diff)
 }
 
-func itoaInt(v int) string {
-	return fmt.Sprintf("%d", v)
-}
+func itoaInt(v int) string { return fmt.Sprintf("%d", v) }

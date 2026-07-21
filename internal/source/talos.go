@@ -159,17 +159,17 @@ func (s *talosSource) Snapshot(ctx context.Context) model.Snapshot {
 			curCores[i] = toCounters(c)
 		}
 		if haveDelta && s.prevCPUTotal != nil {
-			snap.CPU.Total = cpuBusy(*s.prevCPUTotal, curTotal)
-			snap.CPU.PerCore = make([]float64, len(curCores))
+			snap.CPU.Total = cpuLoad(*s.prevCPUTotal, curTotal)
+			snap.CPU.PerCore = make([]model.CPULoad, len(curCores))
 			for i := range curCores {
 				if i < len(s.prevCPUCore) {
-					snap.CPU.PerCore[i] = cpuBusy(s.prevCPUCore[i], curCores[i])
+					snap.CPU.PerCore[i] = cpuLoad(s.prevCPUCore[i], curCores[i])
 				}
 			}
 		} else {
 			// First poll: no delta yet, but expose the core count so the
 			// header can size itself immediately.
-			snap.CPU.PerCore = make([]float64, len(curCores))
+			snap.CPU.PerCore = make([]model.CPULoad, len(curCores))
 		}
 		s.prevCPUTotal = &curTotal
 		s.prevCPUCore = curCores

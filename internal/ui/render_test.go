@@ -57,7 +57,7 @@ func TestRenderContainsHeaderAndProcesses(t *testing.T) {
 		"PID", "CPU%", "MEM%", "RES", "TIME+", "Command",
 		"Mem", "Swp",
 		"kube-apiserver", // a process from the mock tree
-		"Tasks:", "Uptime:",
+		"Tasks", "Uptime",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered frame missing %q\n---\n%s", want, out)

@@ -44,11 +44,26 @@ func (p Process) Name() string {
 	}
 }
 
-// CPUUsage is the total and per-core CPU utilisation for the node, each in the
-// range [0,100].
+// CPULoad is one CPU's utilisation broken down into htop's meter categories,
+// each expressed as a percentage of that CPU (they sum to Busy). This lets the
+// meter draw the same coloured segments htop does rather than a flat bar.
+type CPULoad struct {
+	User   float64 // normal user processes (green)
+	Nice   float64 // low-priority / niced (blue)
+	System float64 // kernel (red)
+	IRQ    float64 // irq + softirq (magenta)
+	Other  float64 // steal + guest (cyan)
+}
+
+// Busy is the total non-idle percentage for the CPU.
+func (c CPULoad) Busy() float64 {
+	return c.User + c.Nice + c.System + c.IRQ + c.Other
+}
+
+// CPUUsage is the aggregate and per-core CPU utilisation for the node.
 type CPUUsage struct {
-	Total   float64
-	PerCore []float64
+	Total   CPULoad
+	PerCore []CPULoad
 }
 
 // MemUsage is the node's memory and swap situation, all byte counts.

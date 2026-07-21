@@ -103,21 +103,34 @@ func (m *mockSource) Snapshot(ctx context.Context) model.Snapshot {
 		Taken:    now,
 	}
 
-	// Per-core CPU: baseline + a wandering sine so meters visibly move.
-	snap.CPU.PerCore = make([]float64, m.cores)
+	// Per-core CPU: baseline + a wandering sine so meters visibly move, split
+	// into htop-style categories so the meters show coloured segments.
+	snap.CPU.PerCore = make([]model.CPULoad, m.cores)
 	var totalBusy float64
+	var sum model.CPULoad
 	for i := 0; i < m.cores; i++ {
 		phase := float64(m.tick)/6 + float64(i)
 		busy := 18 + 22*math.Sin(phase) + 10*m.rng.Float64()
 		busy = clampPercent(busy)
-		snap.CPU.PerCore[i] = busy
+		load := splitLoad(busy)
+		snap.CPU.PerCore[i] = load
 		totalBusy += busy
+		sum.User += load.User
+		sum.Nice += load.Nice
+		sum.System += load.System
+		sum.IRQ += load.IRQ
+		sum.Other += load.Other
 	}
-	snap.CPU.Total = clampPercent(totalBusy / float64(m.cores))
+	n := float64(m.cores)
+	snap.CPU.Total = model.CPULoad{
+		User: sum.User / n, Nice: sum.Nice / n, System: sum.System / n,
+		IRQ: sum.IRQ / n, Other: sum.Other / n,
+	}
+	totalPct := snap.CPU.Total.Busy()
 	snap.LoadAvg = [3]float64{
-		snap.CPU.Total / 100 * float64(m.cores),
-		snap.CPU.Total / 100 * float64(m.cores) * 0.8,
-		snap.CPU.Total / 100 * float64(m.cores) * 0.6,
+		totalPct / 100 * n,
+		totalPct / 100 * n * 0.8,
+		totalPct / 100 * n * 0.6,
 	}
 
 	// Memory: slowly drifting used fraction.
@@ -160,6 +173,18 @@ func (m *mockSource) Snapshot(ctx context.Context) model.Snapshot {
 		})
 	}
 	return snap
+}
+
+// splitLoad divides a busy percentage into believable htop-style categories:
+// mostly user, some system, a little irq, a touch of nice.
+func splitLoad(busy float64) model.CPULoad {
+	return model.CPULoad{
+		User:   busy * 0.68,
+		System: busy * 0.22,
+		IRQ:    busy * 0.06,
+		Nice:   busy * 0.03,
+		Other:  busy * 0.01,
+	}
 }
 
 func firstWord(s string) string {
