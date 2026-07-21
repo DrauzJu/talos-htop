@@ -102,8 +102,10 @@ func filterProcs(procs []model.Process, query string) []model.Process {
 }
 
 // buildRows turns a process slice into display rows honouring sort and tree
-// settings. In flat mode it is a simple sorted list; in tree mode processes are
-// nested under their PPID and each sibling group is sorted by the active key.
+// settings. In flat mode it is a simple sorted list. In tree mode the column
+// sort is intentionally disabled: the hierarchy is the ordering, so processes
+// are nested under their PPID and each sibling group is shown in stable PID
+// order regardless of the selected sort key.
 func buildRows(procs []model.Process, key sortKey, desc, tree bool) []row {
 	if !tree {
 		sorted := append([]model.Process(nil), procs...)
@@ -116,10 +118,10 @@ func buildRows(procs []model.Process, key sortKey, desc, tree bool) []row {
 		}
 		return rows
 	}
-	return buildTree(procs, key, desc)
+	return buildTree(procs)
 }
 
-func buildTree(procs []model.Process, key sortKey, desc bool) []row {
+func buildTree(procs []model.Process) []row {
 	children := map[int32][]model.Process{}
 	present := map[int32]bool{}
 	for _, p := range procs {
@@ -134,10 +136,12 @@ func buildTree(procs []model.Process, key sortKey, desc bool) []row {
 		}
 		children[parent] = append(children[parent], p)
 	}
+	// Sorting is disabled in tree view; order siblings by PID for a stable,
+	// predictable layout that doesn't jitter as metrics change.
 	for k := range children {
 		siblings := children[k]
 		sort.SliceStable(siblings, func(i, j int) bool {
-			return less(siblings[i], siblings[j], key, desc)
+			return siblings[i].PID < siblings[j].PID
 		})
 	}
 

@@ -59,7 +59,8 @@ func TestTreeStructure(t *testing.T) {
 	if byPID[200].depth != 2 || byPID[300].depth != 2 {
 		t.Fatalf("children should be depth 2: apiserver=%d etcd=%d", byPID[200].depth, byPID[300].depth)
 	}
-	// Within kubelet's children, apiserver (90%) sorts before etcd (10%).
+	// Siblings are ordered by PID (sorting is disabled in tree view): apiserver
+	// (PID 200) precedes etcd (PID 300).
 	var iAPI, iETCD int
 	for i, r := range rows {
 		switch r.proc.PID {
@@ -70,11 +71,56 @@ func TestTreeStructure(t *testing.T) {
 		}
 	}
 	if iAPI > iETCD {
-		t.Fatalf("apiserver should precede etcd in tree sibling sort")
+		t.Fatalf("apiserver (PID 200) should precede etcd (PID 300) in PID order")
 	}
 	// Tree rows carry connector glyphs.
 	if !strings.Contains(byPID[200].prefix, "─") {
 		t.Fatalf("expected tree connector in prefix, got %q", byPID[200].prefix)
+	}
+}
+
+// TestTreeIgnoresSort verifies that the active sort key/direction has no effect
+// in tree view: siblings stay in PID order regardless.
+func TestTreeIgnoresSort(t *testing.T) {
+	pidsOf := func(rows []row) []int32 {
+		out := make([]int32, len(rows))
+		for i, r := range rows {
+			out[i] = r.proc.PID
+		}
+		return out
+	}
+
+	// Every sort key/direction must produce the identical tree layout.
+	base := pidsOf(buildRows(sample(), sortPID, false, true))
+	for _, key := range []sortKey{sortCPU, sortMem, sortPID, sortTime, sortName} {
+		for _, desc := range []bool{true, false} {
+			got := pidsOf(buildRows(sample(), key, desc, true))
+			if len(got) != len(base) {
+				t.Fatalf("row count changed for key=%v desc=%v", key, desc)
+			}
+			for i := range base {
+				if got[i] != base[i] {
+					t.Fatalf("tree order changed with sort key=%v desc=%v: %v vs %v", key, desc, got, base)
+				}
+			}
+		}
+	}
+
+	// Concretely: sorting by CPU ascending must NOT reorder kubelet's children
+	// (apiserver CPU 90 would come last under a real CPU-asc sort, but tree
+	// keeps PID order so it stays before etcd).
+	rows := buildRows(sample(), sortCPU, false, true)
+	var iAPI, iETCD int
+	for i, r := range rows {
+		switch r.proc.PID {
+		case 200:
+			iAPI = i
+		case 300:
+			iETCD = i
+		}
+	}
+	if iAPI > iETCD {
+		t.Fatalf("tree must ignore CPU-asc sort; apiserver (PID 200) should stay before etcd (PID 300)")
 	}
 }
 

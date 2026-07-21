@@ -102,6 +102,40 @@ func TestSearchFiltersRows(t *testing.T) {
 	}
 }
 
+func TestTreeModeDisablesSortKeys(t *testing.T) {
+	// Enable tree, capture order, then hammer sort keys and invert.
+	before, _ := drive(t, "t")
+	pidsBefore := rowPIDs(before)
+
+	after, out := drive(t, "t", "m", "p", "T", "c", "i")
+	if !after.tree {
+		t.Fatalf("tree should still be on")
+	}
+	if after.sortKey != sortCPU || !after.desc {
+		t.Fatalf("sort key/direction must be untouched in tree mode, got %v desc=%v", after.sortKey, after.desc)
+	}
+	pidsAfter := rowPIDs(after)
+	if len(pidsBefore) != len(pidsAfter) {
+		t.Fatalf("row count changed")
+	}
+	for i := range pidsBefore {
+		if pidsBefore[i] != pidsAfter[i] {
+			t.Fatalf("tree order changed after sort keys: %v vs %v", pidsAfter, pidsBefore)
+		}
+	}
+	if !strings.Contains(out, "Sort:disabled") {
+		t.Fatalf("footer should show sorting disabled in tree view:\n%s", out)
+	}
+}
+
+func rowPIDs(m Model) []int32 {
+	out := make([]int32, len(m.rows))
+	for i, r := range m.rows {
+		out[i] = r.proc.PID
+	}
+	return out
+}
+
 func TestQuitKey(t *testing.T) {
 	src := source.NewMock(2)
 	var m tea.Model = New(src, time.Second)
