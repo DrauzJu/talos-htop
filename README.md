@@ -10,24 +10,16 @@ htop needs is already exposed over Talos's authenticated **gRPC machine API**
 polls that API and renders it as the familiar full-screen TUI, on your
 workstation, against any node you can reach.
 
-```
-╭─ talos-htop · talos-demo-cp-1 · v1.13.6 ────────────────────────────────────╮
-│  0[|||||||||||||          39.9%]   Mem[||||||||||||||||      3.57G/8.00G]     │
-│  1[||||||||||||||||       47.3%]   Swp[                            none ]     │
-│  2[|||||||||||            31.3%]   17 Tasks, 196 thr; 3 running              │
-│  3[|||                     7.0%]   Load 1.25 1.00 0.75                       │
-│                                    Uptime 3d, 01:00:06                       │
-╰──────────────────────────────────────────────────────────────────────────────╯
-    PID │ S │  CPU% │  MEM% │    VIRT │     RES │  THR │     TIME+ │ ▾Command
-    200 │ R │  62.5 │   9.5 │   2.28G │    777M │   28 │   0:05.42 │ kube-apiserver …
-    210 │ R │  32.2 │   6.6 │   1.58G │    540M │   18 │   0:03.75 │ etcd --data-dir=…
-    ...
-```
+![talos-htop process list](docs/images/screenshot.png)
 
 The CPU meter segments are coloured like htop (blue = nice, green = user,
 red = kernel, magenta = irq/softirq); the memory meter shows used (green),
-buffers (blue) and cache (yellow). See the header box, column dividers, and the
+buffers (blue) and cache (yellow). Note the header box, column dividers, and the
 function-key bar at the bottom.
+
+Tree view (`t` / `F5`) nests processes under their parent PID:
+
+![talos-htop tree view](docs/images/screenshot-tree.png)
 
 ## Features (iteration 1)
 
