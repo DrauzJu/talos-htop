@@ -15,7 +15,8 @@ workstation, against any node you can reach.
 The CPU meter segments are coloured like htop (blue = nice, green = user,
 red = kernel, magenta = irq/softirq); the memory meter shows used (green),
 buffers (blue) and cache (yellow). Note the header box, column dividers, and the
-function-key bar at the bottom.
+function-key bar at the bottom. Press `F1` / `?` for a help page with the full
+colour legend and key bindings.
 
 Tree view (`t` / `F5`) nests processes under their parent PID:
 

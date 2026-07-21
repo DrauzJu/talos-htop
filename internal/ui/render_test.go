@@ -136,6 +136,42 @@ func rowPIDs(m Model) []int32 {
 	return out
 }
 
+func TestHelpPageShowsColorLegend(t *testing.T) {
+	m, out := drive(t, "?")
+	if !m.showHelp {
+		t.Fatalf("expected help page to be open")
+	}
+	for _, want := range []string{
+		"Help", "CPU meter", "Memory meter", "Keys",
+		"user", "nice", "kernel", "irq", "idle", // CPU legend categories
+		"buffers", "cache", // memory legend
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help page missing %q\n---\n%s", want, out)
+		}
+	}
+	// The help page replaces the process list.
+	if strings.Contains(out, "kube-apiserver") {
+		t.Errorf("help page should not show the process list")
+	}
+
+	// Any key dismisses the help page.
+	m2, out2 := drive(t, "?", "x")
+	if m2.showHelp {
+		t.Fatalf("expected help page to close after a keypress")
+	}
+	if !strings.Contains(out2, "kube-apiserver") {
+		t.Errorf("expected process list back after closing help")
+	}
+}
+
+func TestFooterHasHelpHint(t *testing.T) {
+	_, out := drive(t)
+	if !strings.Contains(out, "Help") {
+		t.Errorf("footer should advertise the Help key")
+	}
+}
+
 func TestQuitKey(t *testing.T) {
 	src := source.NewMock(2)
 	var m tea.Model = New(src, time.Second)

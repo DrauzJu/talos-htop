@@ -140,11 +140,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// While the help page is open, any key dismisses it (Ctrl-C still quits).
+	if m.showHelp {
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		m.showHelp = false
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c", "f10":
 		return m, tea.Quit
 	case "?", "f1":
-		m.showHelp = !m.showHelp
+		m.showHelp = true
 		return m, nil
 	case "t", "f5":
 		m.tree = !m.tree

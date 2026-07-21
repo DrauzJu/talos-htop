@@ -57,6 +57,9 @@ func (m Model) View() string {
 	if !m.loaded {
 		return "Connecting to Talos node…"
 	}
+	if m.showHelp {
+		return m.renderHelp()
+	}
 	var b strings.Builder
 	b.WriteString(m.renderHeaderBox())
 	b.WriteByte('\n')
@@ -65,6 +68,99 @@ func (m Model) View() string {
 	b.WriteString(m.renderRows())
 	b.WriteString(m.renderFooter())
 	return b.String()
+}
+
+// ---- help page --------------------------------------------------------------
+
+// swatch renders a small coloured block used in the legend, mirroring the glyph
+// the meters draw.
+func swatch(c lipgloss.Color) string {
+	return lipgloss.NewStyle().Foreground(c).Render("███")
+}
+
+// renderHelp draws the full-screen help page: the meter colour legend (as in
+// htop's F1 help) plus the key bindings.
+func (m Model) renderHelp() string {
+	title := styleTitle.Render("talos-htop — Help")
+	section := func(s string) string {
+		return lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render(s)
+	}
+	dim := func(s string) string { return styleDim.Render(s) }
+
+	cpuLegend := []struct {
+		c    lipgloss.Color
+		name string
+		desc string
+	}{
+		{colGreen, "user", "normal user processes"},
+		{colBlue, "nice", "low-priority (niced) processes"},
+		{colRed, "kernel", "kernel / system time"},
+		{colMagenta, "irq", "IRQ + soft-IRQ time"},
+		{colCyan, "other", "steal + guest time"},
+		{colGray, "idle", "unused (shown as blanks)"},
+	}
+	memLegend := []struct {
+		c    lipgloss.Color
+		name string
+		desc string
+	}{
+		{colGreen, "used", "in-use application memory"},
+		{colBlue, "buffers", "I/O buffers"},
+		{colYellow, "cache", "page cache"},
+	}
+
+	var b strings.Builder
+	writeln := func(s string) { b.WriteString(s); b.WriteByte('\n') }
+
+	writeln(title)
+	writeln("")
+	// legendRow pads the (plain) name to a fixed column before styling, so the
+	// descriptions line up regardless of colour escape codes.
+	legendRow := func(c lipgloss.Color, name, desc string) string {
+		name = lipgloss.NewStyle().Bold(true).Render(padRight(name, 8))
+		return fmt.Sprintf("  %s  %s %s", swatch(c), name, dim(desc))
+	}
+	writeln(section("CPU meter"))
+	writeln(dim("  Each bar shows one core; coloured segments stack left-to-right:"))
+	for _, l := range cpuLegend {
+		writeln(legendRow(l.c, l.name, l.desc))
+	}
+	writeln("")
+	writeln(section("Memory meter"))
+	for _, l := range memLegend {
+		writeln(legendRow(l.c, l.name, l.desc))
+	}
+	writeln("")
+	writeln(section("Keys"))
+	keyRows := [][2]string{
+		{"↑ ↓ / j k", "move selection"},
+		{"PgUp PgDn", "page up / down"},
+		{"g / G", "jump to top / bottom"},
+		{"t / F5", "toggle tree view (disables sorting)"},
+		{"p", "sort by CPU%"},
+		{"m", "sort by MEM%"},
+		{"n", "sort by PID"},
+		{"T", "sort by TIME+"},
+		{"c", "sort by command"},
+		{"i", "invert sort order"},
+		{"F6", "cycle sort column"},
+		{"/ or F3", "incremental search / filter"},
+		{"? or F1", "toggle this help"},
+		{"q / F10", "quit"},
+	}
+	for _, r := range keyRows {
+		writeln(fmt.Sprintf("  %s %s",
+			lipgloss.NewStyle().Foreground(colCyan).Render(fmt.Sprintf("%-11s", r[0])), dim(r[1])))
+	}
+	writeln("")
+	writeln(dim("Press any key to return."))
+
+	// Pad to the full screen height so the alt-screen buffer is fully cleared.
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	for len(lines) < m.height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ---- meter header box -------------------------------------------------------
@@ -377,27 +473,18 @@ func (m Model) renderFooter() string {
 	}
 
 	type fk struct{ key, label string }
-	var keys []fk
-	if m.showHelp {
-		keys = []fk{
-			{"↑↓/jk", "Move"}, {"PgUp/Dn", "Page"}, {"g/G", "Top/Bot"},
-			{"t", "Tree"}, {"p", "CPU"}, {"m", "MEM"}, {"n", "PID"},
-			{"T", "TIME"}, {"c", "CMD"}, {"i", "Invert"}, {"/", "Search"}, {"q", "Quit"},
-		}
-	} else {
-		tree := "off"
-		sort := "Sort:" + m.sortKey.String() + m.sortArrow()
-		if m.tree {
-			tree = "on"
-			sort = "Sort:disabled" // tree hierarchy is the ordering
-		}
-		keys = []fk{
-			{"F5", "Tree:" + tree}, {"F6", sort},
-			{"/", "Search"}, {"?", "Help"}, {"q", "Quit"},
-		}
-		if m.query != "" {
-			keys = append([]fk{{"filter", "\"" + m.query + "\""}}, keys...)
-		}
+	tree := "off"
+	sort := "Sort:" + m.sortKey.String() + m.sortArrow()
+	if m.tree {
+		tree = "on"
+		sort = "Sort:disabled" // tree hierarchy is the ordering
+	}
+	keys := []fk{
+		{"F5", "Tree:" + tree}, {"F6", sort},
+		{"/", "Search"}, {"F1", "Help"}, {"q", "Quit"},
+	}
+	if m.query != "" {
+		keys = append([]fk{{"filter", "\"" + m.query + "\""}}, keys...)
 	}
 
 	var b strings.Builder
