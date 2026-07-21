@@ -34,7 +34,8 @@ function-key bar at the bottom.
 - **Process list** with the essential htop columns: PID, state, CPU%, MEM%,
   VIRT, RES, threads, TIME+, and the full command line.
 - **Tree view** (`t` / `F5`) — processes nested under their parent PID with
-  connector glyphs, each sibling group sorted by the active column.
+  connector glyphs. Column sorting is disabled in this view (the hierarchy is
+  the ordering); siblings are shown in stable PID order.
 - **Total and per-core CPU** utilisation as coloured meter bars.
 - **Per-process CPU%** (Irix-style, so a fully-busy core reads ~100%), computed
   from `cpu_time` deltas between polls — exactly how htop works.

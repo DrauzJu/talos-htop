@@ -150,8 +150,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tree = !m.tree
 		m.rebuild()
 	case "i", "I":
-		m.desc = !m.desc
-		m.rebuild()
+		if !m.tree { // sorting (and thus its direction) is disabled in tree view
+			m.desc = !m.desc
+			m.rebuild()
+		}
 	case "p", "P":
 		m.setSort(sortCPU)
 	case "m", "M":
@@ -193,8 +195,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // setSort selects a sort column, defaulting its direction (descending for the
-// numeric columns, ascending for PID/name) the way htop does.
+// numeric columns, ascending for PID/name) the way htop does. Sorting is
+// disabled while the tree view is active, so this is a no-op there.
 func (m *Model) setSort(k sortKey) {
+	if m.tree {
+		return
+	}
 	if m.sortKey == k {
 		m.desc = !m.desc
 	} else {

@@ -244,7 +244,7 @@ func (m Model) renderColumns() string {
 		parts = append(parts, styleHeaderRow.Render(fmtCell(c, title)))
 	}
 	cmdTitle := "Command"
-	if m.sortKey == sortName {
+	if m.sortKey == sortName && !m.tree {
 		cmdTitle = m.sortArrow() + "Command"
 	}
 	line := strings.Join(parts, sep) + sep +
@@ -252,7 +252,12 @@ func (m Model) renderColumns() string {
 	return line
 }
 
+// sortColTitle is the header title of the column currently sorted by, or "" in
+// tree view where sorting is disabled (so no column shows a sort arrow).
 func (m Model) sortColTitle() string {
+	if m.tree {
+		return ""
+	}
 	switch m.sortKey {
 	case sortCPU:
 		return "CPU%"
@@ -381,11 +386,13 @@ func (m Model) renderFooter() string {
 		}
 	} else {
 		tree := "off"
+		sort := "Sort:" + m.sortKey.String() + m.sortArrow()
 		if m.tree {
 			tree = "on"
+			sort = "Sort:disabled" // tree hierarchy is the ordering
 		}
 		keys = []fk{
-			{"F5", "Tree:" + tree}, {"F6", "Sort:" + m.sortKey.String() + m.sortArrow()},
+			{"F5", "Tree:" + tree}, {"F6", sort},
 			{"/", "Search"}, {"?", "Help"}, {"q", "Quit"},
 		}
 		if m.query != "" {
