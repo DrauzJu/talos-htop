@@ -20,6 +20,7 @@ htop relies on:
 | Total & per-core CPU  | COSI resource `perf.CPU` (`CPUStats.perf.talos.dev`) → per-core + total `CPUStat{user,nice,system,idle,iowait,irq,softIrq,steal,guest,guestNice}` |
 | Memory / swap         | `MachineService.Memory` → `MemInfo{memtotal,memfree,memavailable,buffers,cached,swaptotal,swapfree,...}` |
 | Node identity/version | `MachineService.Version`, response `Metadata.hostname`              |
+| Network sockets       | `MachineService.Netstat` → `ConnectRecord{l4proto,localip,localport,remoteip,remoteport,state,rxqueue,txqueue,process{pid,name}}` — with `feature.pid` for program resolution, the API form of `netstat -tulpn` |
 
 CPU utilisation (total, per-core, and per-process) is not reported directly —
 these are cumulative counters, exactly like `/proc/stat` and `/proc/<pid>/stat`.
@@ -40,6 +41,7 @@ internal/ui/                     Bubble Tea TUI
   view.go                         full-screen layout (header meters + process table)
   meters.go                       CPU/mem/swap meter bars + colouring (lipgloss)
   process.go                      sorting + tree construction + flattening for display
+  netstat.go                      network view: socket filtering/sorting + table rendering
   format.go                       human-friendly byte/time/percent formatting
 ```
 
@@ -71,6 +73,10 @@ cluster (`talos-htop --demo`).
       THREADS, CPU%, MEM%, RES/VIRT, TIME+, Command.
 - [x] **Tree view** (`t` / `F5`) — processes nested under their PPID with
       connector glyphs; toggles against the flat sorted view.
+- [x] **Network view** (`s` / `F2`) — a `netstat -tulpn` for the node via
+      `MachineService.Netstat`: listening (or all) TCP/UDP sockets with local /
+      foreign address, state, and owning PID/program; `l` / `F4` toggles
+      listening-only ↔ all, and `/` search filters the socket list.
 - [x] **Total & per-core CPU utilisation** as coloured meter bars in the header.
 - [x] **Per-process CPU%** (Irix-style: a busy core = 100%) via cpu_time deltas.
 - [x] **Memory & swap** meters (used/buffers/cache breakdown) + per-process MEM%.

@@ -104,7 +104,8 @@ Keys:
   g / G        top / bottom        m        sort by MEM%
   / or F3      search              n        sort by PID
   i            invert sort order   T        sort by TIME+
-  ? or F1      toggle help         c        sort by command
+  s / F2       network (netstat)   c        sort by command
+  l / F4       listening ↔ all     ? / F1   toggle help
   q / F10      quit
 
 Examples:
