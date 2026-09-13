@@ -186,6 +186,101 @@ func (s *talosSource) Snapshot(ctx context.Context) model.Snapshot {
 	return snap
 }
 
+// Sockets polls the node's network sockets via the machine API's Netstat RPC,
+// requesting TCP/UDP (v4 and v6) with process resolution — the equivalent of
+// `netstat -tulpn` (the view filters listening sockets client-side, so all
+// records are fetched and can be shown too).
+//
+// Netns must be set explicitly: the node selects namespaces from this field
+// alone, so leaving it nil scans nothing and returns an empty list with no
+// error. Hostnetwork is what talosctl uses by default — the node's own
+// namespace, i.e. host-network pods and Talos services.
+func (s *talosSource) Sockets(ctx context.Context) ([]model.Socket, error) {
+	nctx := s.nodeCtx(ctx)
+	resp, err := s.client.Netstat(nctx, &machineapi.NetstatRequest{
+		Filter:  machineapi.NetstatRequest_ALL,
+		Feature: &machineapi.NetstatRequest_Feature{Pid: true},
+		L4Proto: &machineapi.NetstatRequest_L4Proto{
+			Tcp: true, Tcp6: true, Udp: true, Udp6: true,
+		},
+		Netns: &machineapi.NetstatRequest_NetNS{Hostnetwork: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("netstat: %w", err)
+	}
+	if len(resp.Messages) == 0 {
+		return nil, nil
+	}
+
+	recs := resp.Messages[0].Connectrecord
+	out := make([]model.Socket, 0, len(recs))
+	for _, r := range recs {
+		sock := model.Socket{
+			Protocol:   r.L4Proto,
+			LocalIP:    r.Localip,
+			LocalPort:  r.Localport,
+			RemoteIP:   r.Remoteip,
+			RemotePort: r.Remoteport,
+			RxQueue:    r.Rxqueue,
+			TxQueue:    r.Txqueue,
+			Inode:      r.Inode,
+		}
+		// Datagram sockets carry no meaningful connection state; netstat leaves
+		// the State column blank for them, and the listening heuristic relies on
+		// an empty state, so only fill it for stream protocols.
+		if !isDatagram(r.L4Proto) {
+			sock.State = tcpStateName(r.State)
+		}
+		if r.Process != nil {
+			sock.PID = int32(r.Process.Pid)
+			sock.Process = r.Process.Name
+		}
+		out = append(out, sock)
+	}
+	return out, nil
+}
+
+// isDatagram reports whether an l4proto label is a connectionless (UDP/UDP-Lite)
+// protocol, which netstat shows without a State.
+func isDatagram(proto string) bool {
+	switch proto {
+	case "udp", "udp6", "udplite", "udplite6", "raw", "raw6":
+		return true
+	}
+	return false
+}
+
+// tcpStateName maps the protobuf connection-state enum to the conventional
+// netstat state name (with the underscores the kernel/ss/netstat use).
+func tcpStateName(s machineapi.ConnectRecord_State) string {
+	switch s {
+	case machineapi.ConnectRecord_ESTABLISHED:
+		return "ESTABLISHED"
+	case machineapi.ConnectRecord_SYN_SENT:
+		return "SYN_SENT"
+	case machineapi.ConnectRecord_SYN_RECV:
+		return "SYN_RECV"
+	case machineapi.ConnectRecord_FIN_WAIT1:
+		return "FIN_WAIT1"
+	case machineapi.ConnectRecord_FIN_WAIT2:
+		return "FIN_WAIT2"
+	case machineapi.ConnectRecord_TIME_WAIT:
+		return "TIME_WAIT"
+	case machineapi.ConnectRecord_CLOSE:
+		return "CLOSE"
+	case machineapi.ConnectRecord_CLOSEWAIT:
+		return "CLOSE_WAIT"
+	case machineapi.ConnectRecord_LASTACK:
+		return "LAST_ACK"
+	case machineapi.ConnectRecord_LISTEN:
+		return "LISTEN"
+	case machineapi.ConnectRecord_CLOSING:
+		return "CLOSING"
+	default:
+		return ""
+	}
+}
+
 // memUsageFromMemInfo converts the kB-valued /proc/meminfo response into a
 // byte-valued model.MemUsage, using htop's "used" definition.
 func memUsageFromMemInfo(mi *machineapi.MemInfo) model.MemUsage {

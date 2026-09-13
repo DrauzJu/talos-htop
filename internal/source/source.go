@@ -16,6 +16,11 @@ type Source interface {
 	// errors are reported via Snapshot.Err rather than returned, so the UI can
 	// keep the previous frame on screen.
 	Snapshot(ctx context.Context) model.Snapshot
+	// Sockets performs a single poll of the node's network sockets — the data
+	// behind `netstat -tulpn`. It is only called while the network view is
+	// active, so it is not part of Snapshot. Errors are returned so the view can
+	// surface them and keep the previous list.
+	Sockets(ctx context.Context) ([]model.Socket, error)
 	// Node returns the human label for the node this source targets.
 	Node() string
 	// Close releases any underlying connection.

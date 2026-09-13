@@ -29,6 +29,11 @@ Tree view (`t` / `F5`) nests processes under their parent PID:
 - **Tree view** (`t` / `F5`) — processes nested under their parent PID with
   connector glyphs. Column sorting is disabled in this view (the hierarchy is
   the ordering); siblings are shown in stable PID order.
+- **Network view** (`s` / `F2`) — a `netstat -tulpn` for the node: listening
+  TCP/UDP sockets (v4 and v6) with the local/foreign address, connection state,
+  and owning PID/program. Toggle listening-only ↔ all sockets (including
+  established connections) with `l` / `F4`; the same `/` search filters by port,
+  address, state, or program.
 - **Total and per-core CPU** utilisation as coloured meter bars.
 - **Per-process CPU%** (Irix-style, so a fully-busy core reads ~100%), computed
   from `cpu_time` deltas between polls — exactly how htop works.
@@ -90,7 +95,8 @@ talos-htop --demo
 | `g`/`G`            | Top / bottom        | `m`      | Sort by MEM%      |
 | `/` or `F3`        | Search / filter     | `n`      | Sort by PID       |
 | `i`                | Invert sort order   | `T`      | Sort by TIME+     |
-| `?` or `F1`        | Toggle help         | `c`      | Sort by command   |
+| `s` or `F2`        | Network (netstat)   | `c`      | Sort by command   |
+| `l` or `F4`        | Listening ↔ all     | `?`/`F1` | Toggle help       |
 | `q` or `F10`       | Quit                |          |                   |
 
 ## How it maps to the Talos API
@@ -102,6 +108,11 @@ talos-htop --demo
 | Memory / swap         | `MachineService.Memory` → `MemInfo`                            |
 | Load average, uptime  | `MachineService.LoadAvg`, `SystemStat.boot_time`              |
 | Node identity/version | `MachineService.Version`, response metadata hostname           |
+| Network sockets       | `MachineService.Netstat` → `ConnectRecord` (with PID resolution) |
+
+The network view uses `Netstat` with `feature.pid` set and TCP/UDP (v4+v6)
+selected — the API equivalent of `netstat -tulpn`. Listening-vs-all filtering is
+done client-side so the toggle is instant.
 
 CPU percentages (total, per-core, per-process) aren't reported directly — those
 counters are cumulative, just like `/proc`. `talos-htop` computes them from the

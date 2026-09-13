@@ -63,9 +63,15 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(m.renderHeaderBox())
 	b.WriteByte('\n')
-	b.WriteString(m.renderColumns())
-	b.WriteByte('\n')
-	b.WriteString(m.renderRows())
+	if m.view == viewNet {
+		b.WriteString(m.renderNetColumns())
+		b.WriteByte('\n')
+		b.WriteString(m.renderNetRows())
+	} else {
+		b.WriteString(m.renderColumns())
+		b.WriteByte('\n')
+		b.WriteString(m.renderRows())
+	}
 	b.WriteString(m.renderFooter())
 	return b.String()
 }
@@ -131,11 +137,32 @@ func (m Model) renderHelp() string {
 		writeln(legendRow(l.c, l.name, l.desc))
 	}
 	writeln("")
+	writeln(section("Network view (s / F2)"))
+	writeln(dim("  netstat -tulpn for the node: listening TCP/UDP sockets and the"))
+	writeln(dim("  owning program. Press l / F4 to toggle between listening-only and"))
+	writeln(dim("  all sockets (including established connections). Sockets that differ"))
+	writeln(dim("  only in their inode — the per-worker listeners of a SO_REUSEPORT"))
+	writeln(dim("  bind — share one row, marked ×N after the program name."))
+	netLegend := []struct {
+		c    lipgloss.Color
+		name string
+		desc string
+	}{
+		{colGreen, "LISTEN", "server socket accepting connections"},
+		{colCyan, "ESTABLISHED", "an open connection"},
+		{colYellow, "wait/close", "TIME_WAIT, CLOSE_WAIT, closing states"},
+	}
+	for _, l := range netLegend {
+		writeln(legendRow(l.c, l.name, l.desc))
+	}
+	writeln("")
 	writeln(section("Keys"))
 	keyRows := [][2]string{
 		{"↑ ↓ / j k", "move selection"},
 		{"PgUp PgDn", "page up / down"},
 		{"g / G", "jump to top / bottom"},
+		{"s / F2", "toggle network (netstat) view"},
+		{"l / F4", "network view: listening-only ↔ all sockets"},
 		{"t / F5", "toggle tree view (disables sorting)"},
 		{"p", "sort by CPU%"},
 		{"m", "sort by MEM%"},
@@ -253,6 +280,9 @@ func (m Model) box(lines []string, contentW int) string {
 	if m.snap.Version != "" {
 		title += " · " + m.snap.Version
 	}
+	if m.view == viewNet {
+		title += " · " + styleTitle.Render("netstat")
+	}
 	if m.lastErr != nil {
 		title += " · " + styleErr.Render("poll error")
 	}
@@ -323,10 +353,7 @@ func (m Model) commandWidth() int {
 }
 
 func fmtCell(c col, v string) string {
-	if c.right {
-		return fmt.Sprintf("%*s", c.w, truncate(v, c.w))
-	}
-	return fmt.Sprintf("%-*s", c.w, truncate(v, c.w))
+	return fmtCellW(c.right, c.w, v)
 }
 
 func (m Model) renderColumns() string {
@@ -473,15 +500,27 @@ func (m Model) renderFooter() string {
 	}
 
 	type fk struct{ key, label string }
-	tree := "off"
-	sort := "Sort:" + m.sortKey.String() + m.sortArrow()
-	if m.tree {
-		tree = "on"
-		sort = "Sort:disabled" // tree hierarchy is the ordering
-	}
-	keys := []fk{
-		{"F5", "Tree:" + tree}, {"F6", sort},
-		{"/", "Search"}, {"F1", "Help"}, {"q", "Quit"},
+	var keys []fk
+	if m.view == viewNet {
+		scope := "all"
+		if m.netListeningOnly {
+			scope = "listening"
+		}
+		keys = []fk{
+			{"F2", "Proc"}, {"F4", "Show:" + scope},
+			{"/", "Search"}, {"F1", "Help"}, {"q", "Quit"},
+		}
+	} else {
+		tree := "off"
+		sort := "Sort:" + m.sortKey.String() + m.sortArrow()
+		if m.tree {
+			tree = "on"
+			sort = "Sort:disabled" // tree hierarchy is the ordering
+		}
+		keys = []fk{
+			{"F5", "Tree:" + tree}, {"F6", sort}, {"F2", "Net"},
+			{"/", "Search"}, {"F1", "Help"}, {"q", "Quit"},
+		}
 	}
 	if m.query != "" {
 		keys = append([]fk{{"filter", "\"" + m.query + "\""}}, keys...)

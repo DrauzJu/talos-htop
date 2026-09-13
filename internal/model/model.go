@@ -44,6 +44,44 @@ func (p Process) Name() string {
 	}
 }
 
+// Socket is one network socket as presented to the network view, mirroring a
+// `netstat -tulpn` row: the layer-4 protocol, the local and remote endpoints,
+// the connection state, and the owning process where the API could resolve it.
+type Socket struct {
+	Protocol   string // tcp, tcp6, udp, udp6
+	LocalIP    string
+	LocalPort  uint32
+	RemoteIP   string
+	RemotePort uint32
+	State      string // LISTEN, ESTABLISHED, …; "" for datagram sockets
+	RxQueue    uint64 // bytes in the receive queue (Recv-Q)
+	TxQueue    uint64 // bytes in the send queue (Send-Q)
+	Inode      uint64
+	PID        int32  // owning process, 0 when the API could not resolve it
+	Process    string // owning program name, "" when unresolved
+
+	// Count is how many sockets this row stands for. A process that binds a
+	// port with SO_REUSEPORT (cilium-envoy, nginx, …) opens one socket per
+	// worker, and the node reports each separately — identical in every field
+	// but the inode. The view collapses those into a single row and records
+	// the number here; 0 or 1 means the row is one socket.
+	Count int
+}
+
+// Listening reports whether the socket is a server socket — the ones
+// `netstat -l` (and `-tulpn`) keep. TCP sockets are listening in the LISTEN
+// state; datagram (UDP) sockets carry no state, so an unconnected one (no
+// remote peer) is treated as listening.
+func (s Socket) Listening() bool {
+	if s.State == "LISTEN" {
+		return true
+	}
+	if s.State == "" && s.RemotePort == 0 {
+		return true
+	}
+	return false
+}
+
 // CPULoad is one CPU's utilisation broken down into htop's meter categories,
 // each expressed as a percentage of that CPU (they sum to Busy). This lets the
 // meter draw the same coloured segments htop does rather than a flat bar.

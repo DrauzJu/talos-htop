@@ -15,6 +15,18 @@ import (
 
 type tickMsg time.Time
 type snapshotMsg struct{ snap model.Snapshot }
+type socketsMsg struct {
+	socks []model.Socket
+	err   error
+}
+
+// viewMode selects which table fills the screen below the meter header.
+type viewMode int
+
+const (
+	viewProc viewMode = iota // the htop-style process list (default)
+	viewNet                  // the netstat-style network sockets list
+)
 
 // Model is the root Bubble Tea model.
 type Model struct {
@@ -25,16 +37,25 @@ type Model struct {
 	lastErr error          // error from the most recent poll, if any
 	loaded  bool
 
+	view viewMode
+
 	sortKey sortKey
 	desc    bool
 	tree    bool
+
+	// Network view state.
+	sockets          []model.Socket // last socket poll (kept on error)
+	socketErr        error          // error from the most recent socket poll
+	socketsLoaded    bool           // a socket poll has completed at least once
+	netRows          []model.Socket // filtered + sorted sockets for display
+	netListeningOnly bool           // show only listening sockets (netstat -l)
 
 	search    textinput.Model
 	searching bool
 	query     string
 
 	rows   []row
-	cursor int // index into rows of the selected process
+	cursor int // index into the active view's rows of the selection
 	offset int // first visible row (scroll position)
 
 	width, height int
@@ -48,13 +69,14 @@ func New(src source.Source, interval time.Duration) Model {
 	ti.CharLimit = 128
 
 	return Model{
-		src:      src,
-		interval: interval,
-		sortKey:  sortCPU,
-		desc:     true,
-		search:   ti,
-		width:    80,
-		height:   24,
+		src:              src,
+		interval:         interval,
+		sortKey:          sortCPU,
+		desc:             true,
+		netListeningOnly: true, // default matches `netstat -tulpn`
+		search:           ti,
+		width:            80,
+		height:           24,
 	}
 }
 
@@ -81,6 +103,22 @@ func (m Model) fetch() tea.Cmd {
 	}
 }
 
+// fetchSockets polls the node's network sockets off the UI goroutine. It is
+// only issued while the network view is active.
+func (m Model) fetchSockets() tea.Cmd {
+	src := m.src
+	timeout := m.interval
+	if timeout < 3*time.Second {
+		timeout = 3 * time.Second
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		socks, err := src.Sockets(ctx)
+		return socketsMsg{socks: socks, err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -89,7 +127,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		return m, tea.Batch(m.fetch(), tick(m.interval))
+		cmds := []tea.Cmd{m.fetch(), tick(m.interval)}
+		if m.view == viewNet {
+			// The network view needs a fresh socket poll each tick; the process
+			// snapshot still drives the meter header and task counts.
+			cmds = append(cmds, m.fetchSockets())
+		}
+		return m, tea.Batch(cmds...)
 
 	case snapshotMsg:
 		m.loaded = true
@@ -99,6 +143,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.snap.Taken.IsZero() {
 			// Never got a good frame; still record identity for the header.
 			m.snap = msg.snap
+		}
+		m.rebuild()
+		return m, nil
+
+	case socketsMsg:
+		m.socketErr = msg.err
+		if msg.err == nil {
+			m.sockets = msg.socks
+			m.socketsLoaded = true
 		}
 		m.rebuild()
 		return m, nil
@@ -155,6 +208,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?", "f1":
 		m.showHelp = true
 		return m, nil
+	case "s", "f2":
+		// Toggle between the process list and the netstat-style network view.
+		if m.view == viewProc {
+			m.view = viewNet
+		} else {
+			m.view = viewProc
+		}
+		m.cursor, m.offset = 0, 0
+		m.rebuild()
+		if m.view == viewNet {
+			// Fetch immediately so the view isn't blank until the next tick.
+			return m, m.fetchSockets()
+		}
+		return m, nil
+	case "l", "L", "f4":
+		// In the network view, toggle between listening-only (netstat -l) and
+		// all sockets. A no-op in the process view.
+		if m.view == viewNet {
+			m.netListeningOnly = !m.netListeningOnly
+			m.cursor, m.offset = 0, 0
+			m.rebuild()
+		}
+		return m, nil
 	case "t", "f5":
 		m.tree = !m.tree
 		m.rebuild()
@@ -197,10 +273,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = 0
 		m.clampScroll()
 	case "end", "G":
-		m.cursor = len(m.rows) - 1
+		m.cursor = m.activeLen() - 1
 		m.clampScroll()
 	}
 	return m, nil
+}
+
+// activeLen is the number of rows in the currently displayed view.
+func (m Model) activeLen() int {
+	if m.view == viewNet {
+		return len(m.netRows)
+	}
+	return len(m.rows)
 }
 
 // setSort selects a sort column, defaulting its direction (descending for the
@@ -219,11 +303,13 @@ func (m *Model) setSort(k sortKey) {
 	m.rebuild()
 }
 
-// rebuild recomputes the visible rows from the current snapshot and settings,
-// keeping the selection on the same PID where possible.
+// rebuild recomputes the visible rows for both views from the current data and
+// settings. The process rows also feed the meter header (task counts), so they
+// are always rebuilt; the selection is kept on the same PID where possible when
+// the process view is active.
 func (m *Model) rebuild() {
 	var selPID int32 = -1
-	if m.cursor >= 0 && m.cursor < len(m.rows) {
+	if m.view == viewProc && m.cursor >= 0 && m.cursor < len(m.rows) {
 		selPID = m.rows[m.cursor].proc.PID
 	}
 
@@ -238,6 +324,8 @@ func (m *Model) rebuild() {
 			}
 		}
 	}
+
+	m.netRows = buildSocketRows(m.sockets, m.query, m.netListeningOnly)
 	m.clampScroll()
 }
 
@@ -247,15 +335,16 @@ func (m *Model) moveCursor(delta int) {
 }
 
 func (m *Model) clampScroll() {
-	if len(m.rows) == 0 {
+	n := m.activeLen()
+	if n == 0 {
 		m.cursor, m.offset = 0, 0
 		return
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	if m.cursor >= len(m.rows) {
-		m.cursor = len(m.rows) - 1
+	if m.cursor >= n {
+		m.cursor = n - 1
 	}
 	h := m.listHeight()
 	if m.cursor < m.offset {

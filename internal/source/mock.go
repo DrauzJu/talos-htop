@@ -175,6 +175,47 @@ func (m *mockSource) Snapshot(ctx context.Context) model.Snapshot {
 	return snap
 }
 
+// Sockets returns a believable set of Talos control-plane sockets so the
+// network view can be exercised with `--demo`: the usual listening services
+// (kube-apiserver, etcd, kubelet, CoreDNS, apid, …) plus a few established
+// connections between them. PIDs line up with the mock process tree.
+func (m *mockSource) Sockets(ctx context.Context) ([]model.Socket, error) {
+	const (
+		any   = "0.0.0.0"
+		lo    = "127.0.0.1"
+		v6any = "::"
+		node  = "10.0.0.5"
+	)
+	socks := []model.Socket{
+		// Listening services.
+		{Protocol: "tcp", LocalIP: any, LocalPort: 6443, State: "LISTEN", PID: 200, Process: "kube-apiserver"},
+		{Protocol: "tcp", LocalIP: lo, LocalPort: 2379, State: "LISTEN", PID: 210, Process: "etcd"},
+		{Protocol: "tcp", LocalIP: node, LocalPort: 2379, State: "LISTEN", PID: 210, Process: "etcd"},
+		{Protocol: "tcp", LocalIP: node, LocalPort: 2380, State: "LISTEN", PID: 210, Process: "etcd"},
+		{Protocol: "tcp", LocalIP: any, LocalPort: 10250, State: "LISTEN", PID: 130, Process: "kubelet"},
+		{Protocol: "tcp", LocalIP: lo, LocalPort: 10248, State: "LISTEN", PID: 130, Process: "kubelet"},
+		{Protocol: "tcp", LocalIP: lo, LocalPort: 10249, State: "LISTEN", PID: 240, Process: "kube-proxy"},
+		{Protocol: "tcp", LocalIP: any, LocalPort: 10256, State: "LISTEN", PID: 240, Process: "kube-proxy"},
+		{Protocol: "tcp", LocalIP: lo, LocalPort: 10257, State: "LISTEN", PID: 220, Process: "kube-controller"},
+		{Protocol: "tcp", LocalIP: lo, LocalPort: 10259, State: "LISTEN", PID: 230, Process: "kube-scheduler"},
+		{Protocol: "tcp6", LocalIP: v6any, LocalPort: 50000, State: "LISTEN", PID: 110, Process: "apid"},
+		{Protocol: "tcp6", LocalIP: v6any, LocalPort: 50001, State: "LISTEN", PID: 120, Process: "trustd"},
+		{Protocol: "tcp", LocalIP: any, LocalPort: 53, State: "LISTEN", PID: 250, Process: "coredns"},
+		{Protocol: "tcp", LocalIP: any, LocalPort: 9153, State: "LISTEN", PID: 250, Process: "coredns"},
+		{Protocol: "tcp", LocalIP: any, LocalPort: 4443, State: "LISTEN", PID: 310, Process: "metrics-server"},
+		// Datagram (UDP) sockets — no state; unconnected ones count as listening.
+		{Protocol: "udp", LocalIP: any, LocalPort: 53, PID: 250, Process: "coredns"},
+		{Protocol: "udp", LocalIP: any, LocalPort: 8472, PID: 260, Process: "flanneld"}, // VXLAN
+		// A few established connections between components.
+		{Protocol: "tcp", LocalIP: node, LocalPort: 6443, RemoteIP: node, RemotePort: 52344, State: "ESTABLISHED", RxQueue: 0, TxQueue: 128, PID: 200, Process: "kube-apiserver"},
+		{Protocol: "tcp", LocalIP: node, LocalPort: 52344, RemoteIP: node, RemotePort: 6443, State: "ESTABLISHED", PID: 130, Process: "kubelet"},
+		{Protocol: "tcp", LocalIP: node, LocalPort: 2379, RemoteIP: node, RemotePort: 41022, State: "ESTABLISHED", PID: 210, Process: "etcd"},
+		{Protocol: "tcp", LocalIP: node, LocalPort: 41022, RemoteIP: node, RemotePort: 2379, State: "ESTABLISHED", PID: 200, Process: "kube-apiserver"},
+		{Protocol: "tcp", LocalIP: node, LocalPort: 51876, RemoteIP: node, RemotePort: 10250, State: "TIME_WAIT"},
+	}
+	return socks, nil
+}
+
 // splitLoad divides a busy percentage into believable htop-style categories:
 // mostly user, some system, a little irq, a touch of nice.
 func splitLoad(busy float64) model.CPULoad {
