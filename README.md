@@ -48,7 +48,8 @@ iterations (multi-node, setup screen, kill/renice, container grouping).
 
 ## Install / build
 
-Requires Go 1.26+.
+Requires Go 1.26.6+ (the pinned toolchain includes fixes for GO-2026-6090 and
+GO-2026-5972 in `crypto/tls` and `encoding/asn1`).
 
 ```sh
 go build -o talos-htop .
