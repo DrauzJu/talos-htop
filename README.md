@@ -128,3 +128,7 @@ go vet ./...
 The data layer sits behind a small `source.Source` interface with two
 implementations (`talos.go` for the real API, `mock.go` for `--demo`), so the UI
 and the ordering/tree logic are testable without a cluster.
+
+## License
+
+[MIT](LICENSE) © Julian Drauz
