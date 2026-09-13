@@ -59,6 +59,13 @@ type Socket struct {
 	Inode      uint64
 	PID        int32  // owning process, 0 when the API could not resolve it
 	Process    string // owning program name, "" when unresolved
+
+	// Count is how many sockets this row stands for. A process that binds a
+	// port with SO_REUSEPORT (cilium-envoy, nginx, …) opens one socket per
+	// worker, and the node reports each separately — identical in every field
+	// but the inode. The view collapses those into a single row and records
+	// the number here; 0 or 1 means the row is one socket.
+	Count int
 }
 
 // Listening reports whether the socket is a server socket — the ones

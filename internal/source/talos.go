@@ -190,6 +190,11 @@ func (s *talosSource) Snapshot(ctx context.Context) model.Snapshot {
 // requesting TCP/UDP (v4 and v6) with process resolution — the equivalent of
 // `netstat -tulpn` (the view filters listening sockets client-side, so all
 // records are fetched and can be shown too).
+//
+// Netns must be set explicitly: the node selects namespaces from this field
+// alone, so leaving it nil scans nothing and returns an empty list with no
+// error. Hostnetwork is what talosctl uses by default — the node's own
+// namespace, i.e. host-network pods and Talos services.
 func (s *talosSource) Sockets(ctx context.Context) ([]model.Socket, error) {
 	nctx := s.nodeCtx(ctx)
 	resp, err := s.client.Netstat(nctx, &machineapi.NetstatRequest{
@@ -198,6 +203,7 @@ func (s *talosSource) Sockets(ctx context.Context) ([]model.Socket, error) {
 		L4Proto: &machineapi.NetstatRequest_L4Proto{
 			Tcp: true, Tcp6: true, Udp: true, Udp6: true,
 		},
+		Netns: &machineapi.NetstatRequest_NetNS{Hostnetwork: true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("netstat: %w", err)

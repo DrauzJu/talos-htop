@@ -77,6 +77,54 @@ func TestBuildSocketRowsAllAndFilter(t *testing.T) {
 	}
 }
 
+func TestBuildSocketRowsCollapsesReusePort(t *testing.T) {
+	// Eight SO_REUSEPORT listeners on the same endpoint, differing only in
+	// inode — exactly what cilium-envoy reports — plus one unrelated socket.
+	socks := []model.Socket{
+		{Protocol: "tcp", LocalIP: "127.0.0.1", LocalPort: 2379, State: "LISTEN", PID: 210, Process: "etcd"},
+	}
+	for i := 0; i < 8; i++ {
+		socks = append(socks, model.Socket{
+			Protocol: "tcp", LocalIP: "0.0.0.0", LocalPort: 9964, State: "LISTEN",
+			PID: 3606, Process: "cilium-envoy", Inode: uint64(18590 + i),
+			RxQueue: uint64(i), // the row must keep the largest queue of the set
+		})
+	}
+
+	rows := buildSocketRows(socks, "", true)
+	if len(rows) != 2 {
+		t.Fatalf("reuseport listeners should collapse to 2 rows, got %d: %+v", len(rows), rows)
+	}
+	etcd, envoy := rows[0], rows[1]
+	if etcd.LocalPort != 2379 || etcd.Count != 1 {
+		t.Errorf("single socket should stay a 1-count row: %+v", etcd)
+	}
+	if envoy.LocalPort != 9964 || envoy.Count != 8 {
+		t.Errorf("collapsed row: port=%d count=%d want 9964/8", envoy.LocalPort, envoy.Count)
+	}
+	if envoy.RxQueue != 7 {
+		t.Errorf("collapsed row Recv-Q = %d, want the max of the set (7)", envoy.RxQueue)
+	}
+	if got := programLabel(envoy); got != "cilium-envoy ×8" {
+		t.Errorf("programLabel = %q, want %q", got, "cilium-envoy ×8")
+	}
+	if got := programLabel(etcd); got != "etcd" {
+		t.Errorf("programLabel = %q, want %q (no count for a single socket)", got, "etcd")
+	}
+}
+
+func TestBuildSocketRowsKeepsDistinctConnections(t *testing.T) {
+	// Connections that share a local endpoint but differ in the remote port are
+	// distinct rows — collapsing must not swallow them.
+	socks := []model.Socket{
+		{Protocol: "tcp", LocalIP: "10.0.0.5", LocalPort: 6443, RemoteIP: "10.0.0.5", RemotePort: 41812, State: "ESTABLISHED", PID: 200, Process: "kube-apiserver"},
+		{Protocol: "tcp", LocalIP: "10.0.0.5", LocalPort: 6443, RemoteIP: "10.0.0.5", RemotePort: 41816, State: "ESTABLISHED", PID: 200, Process: "kube-apiserver"},
+	}
+	if rows := buildSocketRows(socks, "", false); len(rows) != 2 {
+		t.Fatalf("distinct connections must not collapse, got %d rows: %+v", len(rows), rows)
+	}
+}
+
 func TestFormatAddr(t *testing.T) {
 	cases := []struct {
 		ip   string

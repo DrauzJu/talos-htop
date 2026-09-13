@@ -140,7 +140,9 @@ func (m Model) renderHelp() string {
 	writeln(section("Network view (s / F2)"))
 	writeln(dim("  netstat -tulpn for the node: listening TCP/UDP sockets and the"))
 	writeln(dim("  owning program. Press l / F4 to toggle between listening-only and"))
-	writeln(dim("  all sockets (including established connections)."))
+	writeln(dim("  all sockets (including established connections). Sockets that differ"))
+	writeln(dim("  only in their inode — the per-worker listeners of a SO_REUSEPORT"))
+	writeln(dim("  bind — share one row, marked ×N after the program name."))
 	netLegend := []struct {
 		c    lipgloss.Color
 		name string

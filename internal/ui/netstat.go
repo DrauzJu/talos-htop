@@ -76,12 +76,43 @@ func (m Model) netColWidths() []int {
 	return widths
 }
 
-// buildSocketRows filters and orders sockets for display. Listening-only mode
-// keeps just the server sockets (netstat -l); the query filters on any visible
-// field. Rows are ordered by local port so "who's on port N" reads top-to-bottom.
+// socketKey identifies a row: everything the table shows. Two sockets with the
+// same key are indistinguishable on screen, so they collapse into one row.
+type socketKey struct {
+	protocol   string
+	localIP    string
+	localPort  uint32
+	remoteIP   string
+	remotePort uint32
+	state      string
+	pid        int32
+	process    string
+}
+
+func keyOf(s model.Socket) socketKey {
+	return socketKey{
+		protocol:   s.Protocol,
+		localIP:    s.LocalIP,
+		localPort:  s.LocalPort,
+		remoteIP:   s.RemoteIP,
+		remotePort: s.RemotePort,
+		state:      s.State,
+		pid:        s.PID,
+		process:    s.Process,
+	}
+}
+
+// buildSocketRows filters, collapses and orders sockets for display.
+// Listening-only mode keeps just the server sockets (netstat -l); the query
+// filters on any visible field. Sockets that differ only in their inode — the
+// per-worker listeners a SO_REUSEPORT bind creates — collapse into one row
+// carrying the count, since plain netstat's one-line-per-socket output is just
+// the same row repeated. Rows are ordered by local port so "who's on port N"
+// reads top-to-bottom.
 func buildSocketRows(socks []model.Socket, query string, listeningOnly bool) []model.Socket {
 	q := strings.ToLower(query)
 	out := make([]model.Socket, 0, len(socks))
+	at := make(map[socketKey]int, len(socks))
 	for _, s := range socks {
 		if listeningOnly && !s.Listening() {
 			continue
@@ -89,6 +120,17 @@ func buildSocketRows(socks []model.Socket, query string, listeningOnly bool) []m
 		if q != "" && !socketMatches(s, q) {
 			continue
 		}
+		if i, ok := at[keyOf(s)]; ok {
+			r := &out[i]
+			r.Count++
+			// Keep the largest queue depth of the set, so a backlog on one of
+			// the collapsed sockets is never hidden by a quiet sibling.
+			r.RxQueue = max(r.RxQueue, s.RxQueue)
+			r.TxQueue = max(r.TxQueue, s.TxQueue)
+			continue
+		}
+		s.Count = 1
+		at[keyOf(s)] = len(out)
 		out = append(out, s)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -102,7 +144,10 @@ func buildSocketRows(socks []model.Socket, query string, listeningOnly bool) []m
 		if a.LocalIP != b.LocalIP {
 			return a.LocalIP < b.LocalIP
 		}
-		return a.RemotePort < b.RemotePort
+		if a.RemotePort != b.RemotePort {
+			return a.RemotePort < b.RemotePort
+		}
+		return a.RemoteIP < b.RemoteIP
 	})
 	return out
 }
@@ -144,7 +189,9 @@ func (m Model) renderNetRows() string {
 		}
 		if m.socketErr != nil {
 			msg = "  " + m.socketErr.Error()
-		} else if len(m.sockets) == 0 {
+		} else if !m.socketsLoaded {
+			// Only before the first poll lands — a poll that legitimately
+			// returns nothing must read as empty, not as still loading.
 			msg = "  (fetching sockets…)"
 		}
 		b.WriteString(styleDim.Render(msg))
@@ -270,10 +317,15 @@ func pidLabel(pid int32) string {
 }
 
 func programLabel(s model.Socket) string {
-	if s.Process == "" {
-		return "-"
+	name := s.Process
+	if name == "" {
+		name = "-"
 	}
-	return s.Process
+	if s.Count > 1 {
+		// Several identical sockets behind this row (a SO_REUSEPORT bind).
+		name += " ×" + strconv.Itoa(s.Count)
+	}
+	return name
 }
 
 // fmtCellW renders a value padded/truncated to width w, right- or left-aligned.

@@ -46,6 +46,7 @@ type Model struct {
 	// Network view state.
 	sockets          []model.Socket // last socket poll (kept on error)
 	socketErr        error          // error from the most recent socket poll
+	socketsLoaded    bool           // a socket poll has completed at least once
 	netRows          []model.Socket // filtered + sorted sockets for display
 	netListeningOnly bool           // show only listening sockets (netstat -l)
 
@@ -150,6 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.socketErr = msg.err
 		if msg.err == nil {
 			m.sockets = msg.socks
+			m.socketsLoaded = true
 		}
 		m.rebuild()
 		return m, nil
